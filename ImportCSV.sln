@@ -1,9 +1,17 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 2013
-VisualStudioVersion = 12.0.31101.0
+# Visual Studio 15
+VisualStudioVersion = 15.0.34526.175
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImportCSV", "MainForm\ImportCSV.csproj", "{A4198757-60A3-44E9-AAA6-1FD76E12B27A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Information", "Information", "{6FB9BCAE-DC7E-4EE3-9DC1-4070AA2EEDF4}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{04C81619-B7CF-406C-A98A-1AFA6E5E251C}"
+	ProjectSection(SolutionItems) = preProject
+		Information\examples\test.xlsx = Information\examples\test.xlsx
+		Information\examples\test1.csv = Information\examples\test1.csv
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -18,5 +26,11 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{04C81619-B7CF-406C-A98A-1AFA6E5E251C} = {6FB9BCAE-DC7E-4EE3-9DC1-4070AA2EEDF4}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {EB5B850A-59CB-49FC-9024-AB44872508DC}
 	EndGlobalSection
 EndGlobal

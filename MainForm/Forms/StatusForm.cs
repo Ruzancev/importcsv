@@ -44,7 +44,7 @@ namespace Trilogen
             if (pbStatus.InvokeRequired)
             {
                 SetProgressValueCallback progressValueCallback = new SetProgressValueCallback(SetProgressValue);
-                this.Invoke(progressValueCallback, new object[] { value });
+                Invoke(progressValueCallback, new object[] { value });
             }
             else
             {
@@ -58,7 +58,7 @@ namespace Trilogen
             if (lblStatus.InvokeRequired)
             {
                 SetStatusTextCallback statusTextCallback = new SetStatusTextCallback(SetStatusText);
-                this.Invoke(statusTextCallback, new object[] { text });
+                Invoke(statusTextCallback, new object[] { text });
             }
             else
             {
@@ -69,29 +69,29 @@ namespace Trilogen
         // thread safe - change title
         public void SetTitle(string text)
         {
-            if (this.InvokeRequired)
+            if (InvokeRequired)
             {
                 SetTitleCallback titleCallback = new SetTitleCallback(SetTitle);
-                this.Invoke(titleCallback, new object[] { text });
+                Invoke(titleCallback, new object[] { text });
             }
             else
             {
-                this.Text = text;
+                Text = text;
             }
         }
 
         // thread safe - close window
         public void CloseWindow()
         {
-            if (this.InvokeRequired)
+            if (InvokeRequired)
             {
                 CloseWindowCallback closeWindowCallback = new CloseWindowCallback(CloseWindow);
-                this.Invoke(closeWindowCallback);
+                Invoke(closeWindowCallback);
             }
             else
             {
                 // close and dispose of form window
-                this.Close();
+                Close();
             }
         }
 

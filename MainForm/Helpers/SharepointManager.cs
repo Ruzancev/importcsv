@@ -1,6 +1,7 @@
 ﻿using Microsoft.SharePoint.Client;
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Windows.Forms;
 
 namespace Trilogen
@@ -36,10 +37,14 @@ namespace Trilogen
 
         public event ImportHandler ImportUpdate;
 
-        public SharepointManager(string siteUrl)
+        public SharepointManager(string siteUrl, string user, string password)
         {
             // new context
-            _context = new ClientContext(siteUrl);
+            _context = new ClientContext(siteUrl)
+            {
+                //Credentials = System.Net.CredentialCache.DefaultNetworkCredentials
+                Credentials = new NetworkCredential(user, password)
+            };
 
             // web ref
             _web = _context.Web;
@@ -222,7 +227,7 @@ namespace Trilogen
                         if (fieldsFromList.ContainsKey(currentFieldName))
                         {
                             var currentField = fieldsFromList[currentFieldName];
-                            var value = convertValue(currentField, record[i]);
+                            var value = ConvertValue(currentField, record[i]);
 
                             // populate new item
                             newItem[currentFieldName] = value;
@@ -278,6 +283,10 @@ namespace Trilogen
             return true;
         }
 
+        /// <summary>
+        /// Test. 
+        /// </summary>
+        /// <param name="listId"></param>
         public void Read(Guid listId)
         {
             List selectedList = _web.Lists.GetById(listId);
@@ -331,11 +340,11 @@ namespace Trilogen
         }
 
         /// <summary>
-        /// convertValue
+        /// ConvertValue. 
         /// </summary>
         /// <param name="field"></param>
         /// <param name="value"></param>
-        internal object convertValue(Field field, object value)
+        internal object ConvertValue(Field field, object value)
         {
             var type = field.TypeAsString;
             object valueConverted = null;
@@ -350,6 +359,10 @@ namespace Trilogen
                 switch (type)
                 {
                     case "Note":
+                        {
+                            valueConverted = value.ToString();
+                        }
+                        break;
                     case "Text":
                         {
                             valueConverted = value.ToString();
@@ -357,29 +370,31 @@ namespace Trilogen
                         break;
                     case "Boolean":
                         {
-                            valueConverted = Convert.ToBoolean(value.ToString());
-                        }
-                        break;
-                    case "Date":
-                        {
-                            valueConverted = value?.ToString();
+                            string valueAsString = value.ToString();
+
+                            switch (valueAsString)
+                            {
+                                case "ИСТИНА":
+                                    {
+                                        valueConverted = true;
+                                    }
+                                    break;
+                                case "ЛОЖЬ":
+                                    {
+                                        valueConverted = false;
+                                    }
+                                    break;
+                                default:
+                                    {
+                                        valueConverted = Convert.ToBoolean(valueAsString);
+                                    }
+                                    break;
+                            }
                         }
                         break;
                     case "DateTime":
                         {
                             valueConverted = Convert.ToDateTime(value.ToString());
-                        }
-                        break;
-                    case "User":
-                        {
-                            User user = _web.EnsureUser(value.ToString());
-                            _context.Load(user);
-                            _context.ExecuteQuery();
-                            if (user != null)
-                            {
-                                valueConverted = new FieldUserValue() { };
-                                ((FieldUserValue)valueConverted).LookupId = user.Id;
-                            }
                         }
                         break;
                     case "Lookup":
@@ -390,7 +405,7 @@ namespace Trilogen
                     case "LookupMulti":
                         {
                             List<FieldLookupValue> values = new List<FieldLookupValue>();
-                            var valuesList = value.ToString().Split(new[] { ";" }, StringSplitOptions.RemoveEmptyEntries);
+                            var valuesList = value.ToString().Split(new[] { ";#" }, StringSplitOptions.RemoveEmptyEntries);
                             foreach (var valueList in valuesList)
                             {
                                 FieldLookupValue lookupValue = null;
@@ -402,6 +417,7 @@ namespace Trilogen
                                 {
                                     lookupValue = null;
                                 }
+
                                 if (lookupValue != null)
                                 {
                                     values.Add(lookupValue);
@@ -415,31 +431,57 @@ namespace Trilogen
                             valueConverted = Double.Parse(value.ToString());
                         }
                         break;
+                    case "User":
+                        {
+                            var userAsString = value.ToString();
+
+                            if (int.TryParse(userAsString, out int UserId))
+                            {
+                                valueConverted = new FieldUserValue() { LookupId = UserId };
+                            }
+                            else
+                            {
+                                User user = _web.EnsureUser(userAsString);
+                                _context.Load(user);
+                                _context.ExecuteQuery();
+                                if (user != null)
+                                {
+                                    valueConverted = new FieldUserValue() { LookupId = user.Id };
+                                }
+                            }
+                        }
+                        break;
                     case "UserMulti":
                         {
                             List<FieldUserValue> users = new List<FieldUserValue>();
 
-                            var usersList = value.ToString().Split(new[] { ";" }, StringSplitOptions.RemoveEmptyEntries);
+                            var usersList = value.ToString().Split(new[] { ";#" }, StringSplitOptions.RemoveEmptyEntries);
                             foreach (var userAsString in usersList)
                             {
                                 FieldUserValue userValue = null;
-
                                 try
                                 {
-                                    User user = _web.EnsureUser(userAsString);
-                                    _context.Load(user);
-                                    _context.ExecuteQuery();
-                                    if (user != null)
+                                    if (int.TryParse(userAsString, out int UserId))
                                     {
                                         userValue = new FieldUserValue() { };
-                                        userValue.LookupId = user.Id;
+                                        userValue.LookupId = UserId;
+                                    }
+                                    else
+                                    {
+                                        User user = _web.EnsureUser(userAsString);
+                                        _context.Load(user);
+                                        _context.ExecuteQuery();
+                                        if (user != null)
+                                        {
+                                            userValue = new FieldUserValue() { };
+                                            userValue.LookupId = user.Id;
+                                        }
                                     }
                                 }
                                 catch (Exception ex)
                                 {
                                     userValue = null;
                                 }
-
                                 if (userValue != null)
                                 {
                                     users.Add(userValue);
@@ -458,19 +500,19 @@ namespace Trilogen
                             valueConverted = value.ToString();
                         }
                         break;
-                    case "Choice":
+                    case "URL":
                         {
                             valueConverted = value.ToString();
                         }
                         break;
-                    case "URL":
+                    case "Choice":
                         {
                             valueConverted = value.ToString();
                         }
                         break;
                     case "MultiChoice":
                         {
-                            var values = value.ToString().Split(new[] { ";" }, StringSplitOptions.RemoveEmptyEntries);
+                            var values = value.ToString().Split(new[] { ";#" }, StringSplitOptions.RemoveEmptyEntries);
                             valueConverted = values;
                         }
                         break;

@@ -1,9 +1,11 @@
 ﻿using CsvHelper;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Spreadsheet;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Data;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 using Trilogen.Helpers;
@@ -14,13 +16,7 @@ namespace Trilogen
     {
         SharepointManager spManager;
 
-        DataTable dtMapping;
-
         string[] csvHeaders = null;
-
-        DataGridViewComboBoxCell cbSpListItems;
-
-        CsvParser csvParser = null;
 
         List<string[]> csvRecords = null;
 
@@ -38,7 +34,7 @@ namespace Trilogen
         public ImportForm()
         {
             // Handle the ApplicationExit event to know when the application is exiting.
-            Application.ApplicationExit += new EventHandler(this.OnApplicationExit);
+            Application.ApplicationExit += new EventHandler(OnApplicationExit);
 
             // init
             InitializeComponent();
@@ -46,21 +42,18 @@ namespace Trilogen
             // lock other groups
             gbValidate.Enabled = false;
             gbImport.Enabled = false;
-            btnValidateFile.Enabled = false;
+            btnValidateFileCSV.Enabled = false;
 
-            // setup mappings
-            dtMapping = new DataTable();
-            cbSpListItems = new DataGridViewComboBoxCell();
         }
 
-        public bool Connect(string siteUrl)
+        public bool Connect(string siteUrl, string user, string password)
         {
             bool connected = false;
 
             try
             {
                 // sp manager
-                spManager = new SharepointManager(siteUrl);
+                spManager = new SharepointManager(siteUrl, user, password);
 
                 // events
                 spManager.ImportCompleted += new ImportHandler(importCompleted);
@@ -121,96 +114,247 @@ namespace Trilogen
 
             // import disabled until file is validated
             gbImport.Enabled = false;
-            btnValidateFile.Enabled = true;
+            btnValidateFileCSV.Enabled = true;
 
             // reset label
             lblNumRecords.Text = "0 records";
         }
 
-        private bool ValidateCSVFile(string filename)
+
+        private string GetCellValue(SpreadsheetDocument doc, Cell cell)
         {
-            // file is not empty
-            if (!string.IsNullOrEmpty(filename))
+            if (cell.CellValue != null)
             {
-                // file exists
-                if (File.Exists(filename))
+                string value = cell.CellValue.InnerText;
+                if (cell.DataType != null && cell.DataType.Value == CellValues.SharedString)
                 {
-                    // file stream
-                    using (StreamReader csvStreamReader = File.OpenText(filename))
+                    // in older version e.g. 2.0, you can use GetItem instead of ElementAt
+                    return doc.WorkbookPart.SharedStringTablePart.SharedStringTable.ChildElements.ElementAt(int.Parse(value)).InnerText;
+                }
+                else
+                {
+                    return value;
+                }
+            }
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Чтение Excel
+        /// </summary>
+        /// <param name="filename"></param>
+        /// <returns></returns>
+        private bool ValidateExcelFile(string fileName)
+        {
+            // clear existing records
+            dgvMappings.Rows.Clear();
+
+            csvHeaders = new string[0];
+            csvRecords = new List<string[]>();
+
+            // file is not empty
+            if (!string.IsNullOrEmpty(fileName) && (File.Exists(fileName)))
+            {
+                using (SpreadsheetDocument spreadsheetDocument = SpreadsheetDocument.Open(fileName, false))
+                {
+                    WorkbookPart workbookPart = spreadsheetDocument.WorkbookPart;
+                    WorksheetPart worksheetPart = workbookPart.WorksheetParts.First();
+                    SheetData sheetData = worksheetPart.Worksheet.Elements<SheetData>().First();
+
+                    var rows = sheetData.Elements<Row>();
+                    int rowCount = rows.Count();
+
+                    if (rowCount < 2)
                     {
-                        // csv parser
-                        csvParser = new CsvParser(csvStreamReader);
+                        return false;
+                    }
 
-                        // read headers
-                        csvHeaders = csvParser.Read();
-
-                        if (csvHeaders == null)
-                            return false;
-
-                        // clear existing records
-                        dgvMappings.Rows.Clear();
-
-                        // loop through headers
-                        foreach (var header in csvHeaders)
+                    var first = true;
+                    foreach (var row in rows)
+                    {
+                        if (first)
                         {
-                            if (!string.IsNullOrEmpty(header))
+                            first = false;
+                            Row headRow = row;
+
+                            if (headRow == null)
                             {
-                                // add datagrid row
-                                DataGridViewRow newRow = new DataGridViewRow();
-
-                                // checkbox
-                                DataGridViewCheckBoxCell cbCell = new DataGridViewCheckBoxCell();
-
-                                // text box
-                                DataGridViewTextBoxCell txtHeader = new DataGridViewTextBoxCell();
-                                txtHeader.Value = header;
-
-                                DataGridViewComboBoxCell cbMappings = new DataGridViewComboBoxCell();
-                                
-                                // add cells
-                                newRow.Cells.Add(cbCell);
-                                newRow.Cells.Add(txtHeader);
-                                newRow.Cells.Add(cbMappings);
-                                
-                                // add row
-                                dgvMappings.Rows.Add(newRow);
-
-                                // set read only after row is added
-                                cbMappings.ReadOnly = true;
-                            }
-                        }
-
-                        // new records obj
-                        csvRecords = new List<string[]>();
-
-                        // continue reading rest of records
-                        bool hasRecords = true;
-
-                        // loop records
-                        while (hasRecords)
-                        {
-                            // record
-                            string[] record = csvParser.Read();
-
-                            // record does not exist
-                            if (record == null)
-                            {
-                                hasRecords = false;
-
-                                break;
+                                return false;
                             }
 
-                            // record exists
-                            if (record != null)
-                                csvRecords.Add(record);
-                        }
+                            List<string> headers = new List<string>();
+                            var cells = headRow.Elements<Cell>();
+                            foreach (Cell c in cells)
+                            {
+                                headers.Add(GetCellValue(spreadsheetDocument, c));
+                            }
 
-                        return true;
+                            if (headers.Count == 0)
+                            {
+                                return false;
+                            }
+
+                            csvHeaders = headers.ToArray();
+
+                            // loop through headers
+                            foreach (var header in csvHeaders)
+                            {
+                                if (!string.IsNullOrEmpty(header))
+                                {
+                                    // add datagrid row
+                                    DataGridViewRow newRow = new DataGridViewRow();
+                                    // checkbox
+                                    DataGridViewCheckBoxCell cbCell = new DataGridViewCheckBoxCell();
+                                    // text box
+                                    DataGridViewTextBoxCell txtHeader = new DataGridViewTextBoxCell
+                                    {
+                                        Value = header
+                                    };
+                                    DataGridViewComboBoxCell cbMappings = new DataGridViewComboBoxCell();
+                                    // add cells
+                                    newRow.Cells.Add(cbCell);
+                                    newRow.Cells.Add(txtHeader);
+                                    newRow.Cells.Add(cbMappings);
+                                    // add row
+                                    dgvMappings.Rows.Add(newRow);
+                                    // set read only after row is added
+                                    cbMappings.ReadOnly = true;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            List<string> cellValues = new List<string>();
+                            var cells = row.Elements<Cell>();
+                            foreach (Cell c in cells)
+                            {
+                                cellValues.Add(GetCellValue(spreadsheetDocument, c));
+                            }
+                            string[] record = cellValues.ToArray();
+                            csvRecords.Add(record);
+                        }
                     }
                 }
             }
 
+            return true;
+        }
+
+        /// <summary>
+        /// Чтение CSV
+        /// </summary>
+        /// <param name="filename"></param>
+        /// <returns></returns>
+        private bool ValidateCSVFile(string filename)
+        {
+            // file is not empty
+            if (!string.IsNullOrEmpty(filename) && (File.Exists(filename)))
+            {
+
+                // file stream
+                using (StreamReader csvStreamReader = File.OpenText(filename))
+                {
+                    // csv parser
+                    CsvParser csvParser = new CsvParser(csvStreamReader);
+
+                    // read headers
+                    csvHeaders = csvParser.Read();
+
+                    if (csvHeaders == null)
+                        return false;
+
+                    // clear existing records
+                    dgvMappings.Rows.Clear();
+
+                    // loop through headers
+                    foreach (var header in csvHeaders)
+                    {
+                        if (!string.IsNullOrEmpty(header))
+                        {
+                            // add datagrid row
+                            DataGridViewRow newRow = new DataGridViewRow();
+
+                            // checkbox
+                            DataGridViewCheckBoxCell cbCell = new DataGridViewCheckBoxCell();
+
+                            // text box
+                            DataGridViewTextBoxCell txtHeader = new DataGridViewTextBoxCell
+                            {
+                                Value = header
+                            };
+
+                            DataGridViewComboBoxCell cbMappings = new DataGridViewComboBoxCell();
+
+                            // add cells
+                            newRow.Cells.Add(cbCell);
+                            newRow.Cells.Add(txtHeader);
+                            newRow.Cells.Add(cbMappings);
+
+                            // add row
+                            dgvMappings.Rows.Add(newRow);
+
+                            // set read only after row is added
+                            cbMappings.ReadOnly = true;
+                        }
+                    }
+
+                    // new records obj
+                    csvRecords = new List<string[]>();
+
+                    // loop records
+                    while (true)
+                    {
+                        // record
+                        string[] record = csvParser.Read();
+
+                        // record does not exist
+                        if (record == null)
+                        {
+                            break;
+                        }
+
+                        csvRecords.Add(record);
+                    }
+
+                    return true;
+                }
+
+            }
+
             return false;
+        }
+
+
+        private void btnValidateFileExcel_Click(object sender, EventArgs e)
+        {
+            // filename
+            string csvFile = txtImportFilename.Text;
+
+            // file path set
+            if (!string.IsNullOrEmpty(csvFile) && csvFile.Length > 0 && (File.Exists(csvFile)))
+            {
+                // get csv headers
+                bool testExcel = ValidateExcelFile(csvFile);
+
+                // valid file
+                if (!testExcel)
+                {
+                    MessageBox.Show("Unable to validate Excel file", "Error parsing Excel file", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                // has records
+                if (csvRecords != null && csvRecords.Count > 0)
+                {
+                    // enable sharepoint import
+                    gbImport.Enabled = true;
+                    lblNumRecords.Text = csvRecords.Count + " records";
+                }
+                else
+                {
+                    MessageBox.Show("Excel file has no records to import!", "No records to import", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
 
         private void btnValidateFile_Click(object sender, EventArgs e)
@@ -219,33 +363,28 @@ namespace Trilogen
             string csvFile = txtImportFilename.Text;
 
             // file path set
-            if (!string.IsNullOrEmpty(csvFile) && csvFile.Length > 0)
+            if (!string.IsNullOrEmpty(csvFile) && csvFile.Length > 0 && (File.Exists(csvFile)))
             {
-                // file exists
-                if (File.Exists(csvFile))
+                // get csv headers
+                bool testCSV = ValidateCSVFile(csvFile);
+
+                // valid file
+                if (!testCSV)
                 {
-                    // get csv headers
-                    bool testCSV = ValidateCSVFile(csvFile);
+                    MessageBox.Show("Unable to validate CSV file", "Error parsing CSV file", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
 
-                    // valid file
-                    if (!testCSV)
-                    {
-                        MessageBox.Show("Unable to validate CSV file", "Error parsing CSV file", MessageBoxButtons.OK, MessageBoxIcon.Error);
-
-                        return;
-                    }
-
-                    // has records
-                    if (csvRecords != null && csvRecords.Count > 0)
-                    {
-                        // enable sharepoint import
-                        gbImport.Enabled = true;
-                        lblNumRecords.Text = csvRecords.Count + " records";
-                    }
-                    else
-                    {
-                        MessageBox.Show("CSV file has no records to import!", "No records to import", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
+                // has records
+                if (csvRecords != null && csvRecords.Count > 0)
+                {
+                    // enable sharepoint import
+                    gbImport.Enabled = true;
+                    lblNumRecords.Text = csvRecords.Count + " records";
+                }
+                else
+                {
+                    MessageBox.Show("CSV file has no records to import!", "No records to import", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
         }
@@ -253,8 +392,10 @@ namespace Trilogen
         private void btnConnect_Click(object sender, EventArgs e)
         {
             string siteUrl = txtSiteUrl.Text;
+            string user = txtUser.Text;
+            string password = txtPassword.Text;
 
-            bool result = Connect(siteUrl);
+            bool result = Connect(siteUrl, user, password);
 
             if (result)
             {
@@ -349,39 +490,7 @@ namespace Trilogen
 
             return false;
         }
-
-        bool HasSelectedDataType()
-        {
-            // loop through each row
-            for (int i = 0; i < dgvMappings.Rows.Count; i++)
-            {
-                // row
-                DataGridViewRow row = dgvMappings.Rows[i];
-
-                // combo box type
-                DataGridViewComboBoxCell cbType = (DataGridViewComboBoxCell)row.Cells[3];
-
-                // checkbox cell
-                DataGridViewCheckBoxCell cbCell = (DataGridViewCheckBoxCell)row.Cells[0];
-
-                // is checked
-                bool isChecked = (Convert.ToBoolean(cbCell.Value));
-
-                // column selected
-                if (isChecked)
-                {
-                    // get string ref
-                    string strDataType = Convert.ToString(cbType.Value);
-
-                    // has been set
-                    if (!string.IsNullOrEmpty(strDataType))
-                        return true;
-                }
-            }
-
-            return false;
-        }
-
+               
         private void importUpdated(ImportEvent e)
         {
             if (e != null)
@@ -473,7 +582,6 @@ namespace Trilogen
             if (spManager != null)
             {
                 // vars
-                string listName = string.Empty;
                 Guid listId = Guid.Empty;
 
                 // has list been selected
@@ -484,7 +592,6 @@ namespace Trilogen
                     // select item exists
                     if (selectedItem != null)
                     {
-                        listName = selectedItem.Text;
                         listId = (Guid)selectedItem.Value;
                     }
                 }
@@ -516,7 +623,7 @@ namespace Trilogen
 
                     // disable buttons
                     btnBrowse.Enabled = false;
-                    btnValidateFile.Enabled = false;
+                    btnValidateFileCSV.Enabled = false;
                     btnImport.Enabled = false;
                 }
             }
@@ -688,7 +795,7 @@ namespace Trilogen
             if (btnBrowse.InvokeRequired)
             {
                 EnableBrowseCallback enableBrowseCallback = new EnableBrowseCallback(enableBrowse);
-                this.Invoke(enableBrowseCallback);
+                Invoke(enableBrowseCallback);
             }
             else
             {
@@ -703,7 +810,7 @@ namespace Trilogen
             if (cbListname.InvokeRequired)
             {
                 ResetListNameCallback resetListNameCallback = new ResetListNameCallback(resetListName);
-                this.Invoke(resetListNameCallback);
+                Invoke(resetListNameCallback);
             }
             else
             {
@@ -718,7 +825,7 @@ namespace Trilogen
             if (btnImport.InvokeRequired)
             {
                 EnableImportCallback enableImportCallback = new EnableImportCallback(enableImport);
-                this.Invoke(enableImportCallback);
+                Invoke(enableImportCallback);
             }
             else
             {
@@ -726,7 +833,12 @@ namespace Trilogen
             }
         }
 
-        private void button1_Click(object sender, EventArgs e)
+        /// <summary>
+        /// Test
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void Test_Click(object sender, EventArgs e)
         {
             ComboBoxItem selectedItem = (ComboBoxItem)cbListname.Items[cbListname.SelectedIndex];
 
@@ -735,7 +847,19 @@ namespace Trilogen
 
             spManager.Read(listId);
 
+        }
+
+        /// <summary>
+        /// ShowHelpForm
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void ShowHelpForm_Click(object sender, EventArgs e)
+        {
+            var help = new Forms.Help();
+            help.ShowDialog();
 
         }
+
     }
 }
